@@ -154,7 +154,7 @@ def get_signal_summary(df):
     return signals, score, overall
 
 # ──────────────────────────────────────────
-# 뉴스 로드 (URL 인코딩 수정)
+# 뉴스 로드
 # ──────────────────────────────────────────
 @st.cache_data(ttl=1800)
 def load_news(stock_name, ticker):
@@ -163,7 +163,6 @@ def load_news(stock_name, ticker):
     rss   = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
     feed  = feedparser.parse(rss)
 
-    # 단순 주가 전망 기사 필터링 키워드
     skip_keywords = [
         "목표가", "얼마 간다", "조 간다", "만원 간다",
         "전망↑", "전망↓", "상향", "하향", "매수", "매도",
@@ -173,9 +172,9 @@ def load_news(stock_name, ticker):
         "집중매수", "집중매도", "개미"
     ]
 
-    seen_titles = []  # 중복 체크용
+    seen_titles = []
 
-    for entry in feed.entries[:50]:  # 더 많이 가져와서 필터링
+    for entry in feed.entries[:50]:
         pt = entry.get("published_parsed")
         if pt:
             pub_dt = datetime(pt[0], pt[1], pt[2], pt[3], pt[4], pt[5])
@@ -187,11 +186,9 @@ def load_news(stock_name, ticker):
         source  = entry.get("source", {}).get("title", "")
         pub_str = pub_dt.strftime("%Y-%m-%d %H:%M")
 
-        # 단순 주가 전망 기사 스킵
         if any(kw in title for kw in skip_keywords):
             continue
 
-        # 중복 제거 (앞 15글자가 비슷하면 스킵)
         short_title = title[:15]
         if short_title in seen_titles:
             continue
@@ -408,9 +405,7 @@ if st.session_state.get("ticker"):
         fig_cmp.update_layout(title="📊 수익률 비교 (시작일 = 100 기준)", template="plotly_dark", height=400, hovermode="x unified", yaxis_title="상대 수익률 (%)", margin=dict(l=10, r=10, t=60, b=10))
         st.plotly_chart(fig_cmp, use_container_width=True)
 
-    # ──────────────────────────────────────────
     # AI 예측
-    # ──────────────────────────────────────────
     st.markdown("---")
     st.subheader("🤖 AI 예측")
 
@@ -423,66 +418,37 @@ if st.session_state.get("ticker"):
         fig_ai.add_trace(go.Scatter(x=x_test, y=y_test_pred, name="테스트예측", line=dict(color="#BF5AF2", width=1.5, dash="dot"), hovertemplate="테스트: %{y:,.0f}원<extra></extra>"))
         fig_ai.add_trace(go.Scatter(x=x_future, y=y_future, name="미래예측", line=dict(color="#30D158", width=2.5), hovertemplate="예측: %{y:,.0f}원<extra></extra>"))
         fig_ai.add_trace(go.Scatter(x=[last_date, last_date], y=[min(y_actual)*0.95, max(y_actual)*1.05], mode="lines", line=dict(color="gray", dash="dash", width=1), name="예측시작", hoverinfo="skip"))
-        fig_ai.update_layout(
-            title=f"{title} | 오차율: {mape:.2f}%",
-            template="plotly_dark", height=380,
-            hovermode="x unified",
-            xaxis=dict(showspikes=True, spikemode="across+toaxis", spikecolor="#aaaaaa", spikethickness=1, spikedash="solid"),
-            margin=dict(l=10, r=10, t=50, b=10)
-        )
+        fig_ai.update_layout(title=f"{title} | 오차율: {mape:.2f}%", template="plotly_dark", height=380, hovermode="x unified", xaxis=dict(showspikes=True, spikemode="across+toaxis", spikecolor="#aaaaaa", spikethickness=1, spikedash="solid"), margin=dict(l=10, r=10, t=50, b=10))
         return fig_ai
 
-    # ── XGBoost (급등락 가중치 적용)
-    if show_xgb:
+    if show_xgb and ai_cols:
         with cols[ai_cols.index("XGBoost")]:
             with st.spinner("XGBoost 예측 중..."):
                 try:
                     from xgboost import XGBRegressor
                     from sklearn.metrics import mean_absolute_percentage_error
-
                     fcols  = ["종가","거래량","RSI","MACD","Signal","MA5","MA20","MA60"]
                     df_xgb = df[fcols].dropna().copy()
                     W = 5
-
                     rows = []
                     for i in range(W, len(df_xgb)):
                         row = {f"{c}_lag{d+1}": df_xgb.iloc[i-W+d][c] for d in range(W) for c in fcols}
                         row["target"] = df_xgb.iloc[i]["종가"]
                         rows.append(row)
-
                     ml = pd.DataFrame(rows)
                     X, y = ml.drop("target", axis=1), ml["target"]
-                    sp   = int(len(X) * 0.8)
-
-                    # ✅ 급등락 가중치 계산
-                    # 전일 대비 변동률 계산
+                    sp  = int(len(X)*0.8)
                     returns    = df_xgb["종가"].pct_change().abs().fillna(0)
-                    # 변동률 기반 샘플 가중치 (급등락일수록 높은 가중치)
-                    # rolling 평균 대비 몇 배인지로 정규화
                     mean_vol   = returns.rolling(20).mean().fillna(returns.mean())
-                    # 가중치 = 변동률 / 평균변동률 (최소 1.0, 최대 5.0 클리핑)
                     weights_raw = (returns / mean_vol.replace(0, 1e-6)).clip(1.0, 3.0)
-                    # 학습 데이터에 맞게 슬라이싱
                     sample_weights = weights_raw.iloc[W:].values[:sp]
-
-                    mdl = XGBRegressor(
-                        n_estimators=500,
-                        learning_rate=0.05,
-                        max_depth=4,
-                        subsample=0.9,
-                        colsample_bytree=0.9,
-                        min_child_weight=3,
-                        random_state=42,
-                        verbosity=0
-                    )
+                    mdl = XGBRegressor(n_estimators=500, learning_rate=0.05, max_depth=4, subsample=0.9, colsample_bytree=0.9, min_child_weight=3, random_state=42, verbosity=0)
                     mdl.fit(X.iloc[:sp], y.iloc[:sp], sample_weight=sample_weights)
                     yp   = mdl.predict(X.iloc[sp:])
                     mape = mean_absolute_percentage_error(y.iloc[sp:], yp) * 100
-
-                    # 미래 예측
-                    cur = df_xgb.tail(W).values.copy()
-                    std = df_xgb["종가"].pct_change().std()
-                    fp  = []
+                    cur  = df_xgb.tail(W).values.copy()
+                    std  = df_xgb["종가"].pct_change().std()
+                    fp   = []
                     for _ in range(predict_days):
                         row  = {f"{c}_lag{d+1}": cur[d][ci] for d in range(W) for ci, c in enumerate(fcols)}
                         pred = mdl.predict(pd.DataFrame([row]))[0]
@@ -490,11 +456,9 @@ if st.session_state.get("ticker"):
                         fp.append(pred)
                         nr = cur[-1].copy(); nr[0] = pred
                         cur = np.vstack([cur[1:], nr])
-
                     ld = pd.to_datetime(df.index[-1])
                     fd = pd.bdate_range(start=ld + timedelta(days=1), periods=predict_days)
                     td = df_xgb.index[sp + W:]
-
                     fig_xgb = make_ai_chart("XGBoost (급등락 가중치)", df_xgb.index, df_xgb["종가"].values, td, yp, fd, fp, ld, mape)
                     st.plotly_chart(fig_xgb, use_container_width=True)
                     xc = (fp[-1] - df_xgb["종가"].iloc[-1]) / df_xgb["종가"].iloc[-1] * 100
@@ -502,8 +466,7 @@ if st.session_state.get("ticker"):
                 except ImportError:
                     st.warning("pip install xgboost scikit-learn")
 
-    # ── Prophet
-    if show_prophet:
+    if show_prophet and ai_cols:
         with cols[ai_cols.index("Prophet")]:
             with st.spinner("Prophet 예측 중..."):
                 try:
@@ -526,51 +489,53 @@ if st.session_state.get("ticker"):
                 except ImportError:
                     st.warning("pip install prophet")
 
-    # ── LSTM
-    if show_lstm:
-    with cols[ai_cols.index("LSTM")]:
-        with st.spinner("LSTM 예측 중... (1~2분 소요)"):
-            try:
-                import tensorflow as tf
-                from sklearn.preprocessing import MinMaxScaler
-                tf.get_logger().setLevel("ERROR")
-                cp  = df["종가"].values.reshape(-1, 1)
-                sc  = MinMaxScaler()
-                scl = sc.fit_transform(cp)
-                W   = 20
-                Xl, yl = [], []
-                for i in range(W, len(scl)):
-                    Xl.append(scl[i-W:i, 0]); yl.append(scl[i, 0])
-                Xl = np.array(Xl).reshape(-1, W, 1); yl = np.array(yl)
-                sp  = int(len(Xl)*0.8)
-                mdl = tf.keras.Sequential([
-                    tf.keras.layers.LSTM(64, return_sequences=True, input_shape=(W, 1)),
-                    tf.keras.layers.Dropout(0.2),
-                    tf.keras.layers.LSTM(32),
-                    tf.keras.layers.Dropout(0.2),
-                    tf.keras.layers.Dense(1)
-                ])
-                mdl.compile(optimizer="adam", loss="mse")
-                mdl.fit(Xl[:sp], yl[:sp], epochs=30, batch_size=16, verbose=0)
-                yp  = sc.inverse_transform(mdl.predict(Xl[sp:], verbose=0)).flatten()
-                ya  = sc.inverse_transform(yl[sp:].reshape(-1,1)).flatten()
-                ml  = np.mean(np.abs((ya - yp) / ya)) * 100
-                last_seq = scl[-W:].reshape(1, W, 1)
-                fl = []
-                for _ in range(predict_days):
-                    ps = mdl.predict(last_seq, verbose=0)[0, 0]
-                    fl.append(ps)
-                    last_seq = np.append(last_seq[:, 1:, :], [[[ps]]], axis=1)
-                fl  = sc.inverse_transform(np.array(fl).reshape(-1,1)).flatten()
-                ld  = pd.to_datetime(df.index[-1])
-                fd  = pd.bdate_range(start=ld + timedelta(days=1), periods=predict_days)
-                td  = df.index[W + sp:]
-                fig_l = make_ai_chart("LSTM", df.index, df["종가"].values, td, yp, fd, fl, ld, ml)
-                st.plotly_chart(fig_l, use_container_width=True)
-                lc = (fl[-1] - df["종가"].iloc[-1]) / df["종가"].iloc[-1] * 100
-                st.metric(f"LSTM {predict_days}일 후", f"{fl[-1]:,.0f}원", f"{lc:+.2f}%")
-            except ImportError:
-                st.warning("pip install tensorflow")
+    if show_lstm and ai_cols:
+        with cols[ai_cols.index("LSTM")]:
+            with st.spinner("LSTM 예측 중... (1~2분 소요)"):
+                try:
+                    import tensorflow as tf
+                    from sklearn.preprocessing import MinMaxScaler
+                    tf.get_logger().setLevel("ERROR")
+                    cp  = df["종가"].values.reshape(-1, 1)
+                    sc  = MinMaxScaler()
+                    scl = sc.fit_transform(cp)
+                    W   = 20
+                    Xl, yl = [], []
+                    for i in range(W, len(scl)):
+                        Xl.append(scl[i-W:i, 0]); yl.append(scl[i, 0])
+                    Xl = np.array(Xl).reshape(-1, W, 1); yl = np.array(yl)
+                    sp  = int(len(Xl)*0.8)
+                    mdl = tf.keras.Sequential([
+                        tf.keras.layers.LSTM(64, return_sequences=True, input_shape=(W, 1)),
+                        tf.keras.layers.Dropout(0.2),
+                        tf.keras.layers.LSTM(32),
+                        tf.keras.layers.Dropout(0.2),
+                        tf.keras.layers.Dense(1)
+                    ])
+                    mdl.compile(optimizer="adam", loss="mse")
+                    mdl.fit(Xl[:sp], yl[:sp], epochs=30, batch_size=16, verbose=0)
+                    yp  = sc.inverse_transform(mdl.predict(Xl[sp:], verbose=0)).flatten()
+                    ya  = sc.inverse_transform(yl[sp:].reshape(-1,1)).flatten()
+                    ml  = np.mean(np.abs((ya - yp) / ya)) * 100
+                    last_seq = scl[-W:].reshape(1, W, 1)
+                    fl = []
+                    for _ in range(predict_days):
+                        ps = mdl.predict(last_seq, verbose=0)[0, 0]
+                        fl.append(ps)
+                        last_seq = np.append(last_seq[:, 1:, :], [[[ps]]], axis=1)
+                    fl  = sc.inverse_transform(np.array(fl).reshape(-1,1)).flatten()
+                    ld  = pd.to_datetime(df.index[-1])
+                    fd  = pd.bdate_range(start=ld + timedelta(days=1), periods=predict_days)
+                    td  = df.index[W + sp:]
+                    fig_l = make_ai_chart("LSTM", df.index, df["종가"].values, td, yp, fd, fl, ld, ml)
+                    st.plotly_chart(fig_l, use_container_width=True)
+                    lc = (fl[-1] - df["종가"].iloc[-1]) / df["종가"].iloc[-1] * 100
+                    st.metric(f"LSTM {predict_days}일 후", f"{fl[-1]:,.0f}원", f"{lc:+.2f}%")
+                except ImportError:
+                    st.warning("pip install tensorflow")
+
+    if not ai_cols:
+        st.info("👈 왼쪽 사이드바에서 AI 예측 모델을 선택해주세요!")
 
     # 최근 데이터 테이블
     st.markdown("---")
@@ -582,37 +547,23 @@ if st.session_state.get("ticker"):
     disp["MACD"]   = disp["MACD"].map("{:.1f}".format)
     st.dataframe(disp, use_container_width=True)
 
-    # ──────────────────────────────────────────
-    # 📰 최근 뉴스
-    # ──────────────────────────────────────────
+    # 뉴스
     st.markdown("---")
     st.subheader(f"📰 {name} 최근 뉴스")
-
     with st.spinner("뉴스 수집 중..."):
         news_list = load_news(name, ticker)
-
     if news_list:
         for news in news_list[:10]:
-            st.markdown(
-                f"""
-                <div style='
-                    background:#1e1e2e;
-                    border-left:3px solid #30D158;
-                    border-radius:8px;
-                    padding:12px 16px;
-                    margin-bottom:10px;
-                '>
+            st.markdown(f"""
+                <div style='background:#1e1e2e;border-left:3px solid #30D158;
+                border-radius:8px;padding:12px 16px;margin-bottom:10px;'>
                     <a href='{news["링크"]}' target='_blank' style='
-                        color:#ffffff;font-size:14px;
-                        font-weight:bold;text-decoration:none;
+                        color:#ffffff;font-size:14px;font-weight:bold;text-decoration:none;
                     '>📌 {news["제목"]}</a>
                     <div style='font-size:12px;color:#888;margin-top:6px;'>
                         {news["출처"]} &nbsp;|&nbsp; {news["날짜"]}
                     </div>
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
+                </div>""", unsafe_allow_html=True)
     else:
         st.info("뉴스를 찾지 못했어요. 잠시 후 다시 시도해주세요.")
 
