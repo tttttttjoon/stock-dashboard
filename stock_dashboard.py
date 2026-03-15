@@ -63,9 +63,9 @@ with st.sidebar:
     START_DT = datetime.today() - timedelta(days=days)
 
     st.subheader("🤖 AI 예측")
-    show_xgb     = st.checkbox("XGBoost 예측", value=True)
-    show_prophet = st.checkbox("Prophet 예측", value=True)
-    show_lstm    = st.checkbox("LSTM 예측", value=True)
+    show_xgb     = st.checkbox("XGBoost 예측", value=False)
+    show_prophet = st.checkbox("Prophet 예측", value=False)
+    show_lstm    = st.checkbox("LSTM 예측", value=False)
     predict_days = st.slider("예측 기간 (일)", 10, 60, 30)
 
     st.markdown("---")
