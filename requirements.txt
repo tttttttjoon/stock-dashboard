@@ -9,3 +9,4 @@ scikit-learn
 yfinance
 prophet
 feedparser
+tensorflow
