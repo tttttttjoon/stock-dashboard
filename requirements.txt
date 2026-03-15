@@ -1,0 +1,11 @@
+streamlit
+pykrx
+pandas
+plotly
+ta
+xgboost
+scikit-learn
+yfinance
+prophet
+tensorflow
+feedparser
