@@ -7,5 +7,5 @@ xgboost
 scikit-learn
 yfinance
 prophet
-tensorflow
+tensorflow-cpu
 feedparser
