@@ -504,49 +504,19 @@ if st.session_state.get("ticker"):
 
     # ── LSTM
     if show_lstm:
-        with cols[ai_cols.index("LSTM")]:
-            with st.spinner("LSTM 예측 중... (1~2분 소요)"):
-                try:
-                    import tensorflow as tf
-                    from sklearn.preprocessing import MinMaxScaler
-                    tf.get_logger().setLevel("ERROR")
-                    cp  = df["종가"].values.reshape(-1, 1)
-                    sc  = MinMaxScaler()
-                    scl = sc.fit_transform(cp)
-                    W   = 20
-                    Xl, yl = [], []
-                    for i in range(W, len(scl)):
-                        Xl.append(scl[i-W:i, 0]); yl.append(scl[i, 0])
-                    Xl = np.array(Xl).reshape(-1, W, 1); yl = np.array(yl)
-                    sp  = int(len(Xl)*0.8)
-                    mdl = tf.keras.Sequential([
-                        tf.keras.layers.LSTM(64, return_sequences=True, input_shape=(W, 1)),
-                        tf.keras.layers.Dropout(0.2),
-                        tf.keras.layers.LSTM(32),
-                        tf.keras.layers.Dropout(0.2),
-                        tf.keras.layers.Dense(1)
-                    ])
-                    mdl.compile(optimizer="adam", loss="mse")
-                    mdl.fit(Xl[:sp], yl[:sp], epochs=30, batch_size=16, verbose=0)
-                    yp  = sc.inverse_transform(mdl.predict(Xl[sp:], verbose=0)).flatten()
-                    ya  = sc.inverse_transform(yl[sp:].reshape(-1,1)).flatten()
-                    ml  = np.mean(np.abs((ya - yp) / ya)) * 100
-                    last_seq = scl[-W:].reshape(1, W, 1)
-                    fl = []
-                    for _ in range(predict_days):
-                        ps = mdl.predict(last_seq, verbose=0)[0, 0]
-                        fl.append(ps)
-                        last_seq = np.append(last_seq[:, 1:, :], [[[ps]]], axis=1)
-                    fl  = sc.inverse_transform(np.array(fl).reshape(-1,1)).flatten()
-                    ld  = pd.to_datetime(df.index[-1])
-                    fd  = pd.bdate_range(start=ld + timedelta(days=1), periods=predict_days)
-                    td  = df.index[W + sp:]
-                    fig_l = make_ai_chart("LSTM", df.index, df["종가"].values, td, yp, fd, fl, ld, ml)
-                    st.plotly_chart(fig_l, use_container_width=True)
-                    lc = (fl[-1] - df["종가"].iloc[-1]) / df["종가"].iloc[-1] * 100
-                    st.metric(f"LSTM {predict_days}일 후", f"{fl[-1]:,.0f}원", f"{lc:+.2f}%")
-                except ImportError:
-                    st.warning("pip install tensorflow")
+       with cols[ai_cols.index("LSTM")]:
+        st.markdown("""
+            <div style='background:#1e1e2e;border:1px solid #555;border-radius:10px;
+            padding:20px;text-align:center;height:380px;display:flex;
+            flex-direction:column;justify-content:center;'>
+                <div style='font-size:40px;margin-bottom:16px;'>🤖</div>
+                <div style='font-size:16px;color:#aaa;margin-bottom:8px;'>LSTM 예측</div>
+                <div style='font-size:13px;color:#666;'>
+                    Cloud 환경에서는 미지원이에요.<br>
+                    로컬 PC에서 실행하면 사용 가능해요!
+                </div>
+            </div>
+        """, unsafe_allow_html=True)
 
     # 최근 데이터 테이블
     st.markdown("---")
