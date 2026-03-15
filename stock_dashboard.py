@@ -159,12 +159,20 @@ def get_signal_summary(df):
 @st.cache_data(ttl=1800)
 def load_news(stock_name, ticker):
     news_list = []
-    # URL에 공백/특수문자 없도록 인코딩
     query = quote(f"{stock_name} 주가")
     rss   = f"https://news.google.com/rss/search?q={query}&hl=ko&gl=KR&ceid=KR:ko"
     feed  = feedparser.parse(rss)
 
-    for entry in feed.entries[:20]:
+    # 단순 주가 전망 기사 필터링 키워드
+    skip_keywords = [
+        "목표가", "얼마 간다", "조 간다", "만원 간다",
+        "전망↑", "전망↓", "상향", "하향", "매수", "매도",
+        "투자의견", "리포트"
+    ]
+
+    seen_titles = []  # 중복 체크용
+
+    for entry in feed.entries[:50]:  # 더 많이 가져와서 필터링
         pt = entry.get("published_parsed")
         if pt:
             pub_dt = datetime(pt[0], pt[1], pt[2], pt[3], pt[4], pt[5])
@@ -176,6 +184,16 @@ def load_news(stock_name, ticker):
         source  = entry.get("source", {}).get("title", "")
         pub_str = pub_dt.strftime("%Y-%m-%d %H:%M")
 
+        # 단순 주가 전망 기사 스킵
+        if any(kw in title for kw in skip_keywords):
+            continue
+
+        # 중복 제거 (앞 15글자가 비슷하면 스킵)
+        short_title = title[:15]
+        if short_title in seen_titles:
+            continue
+        seen_titles.append(short_title)
+
         news_list.append({
             "제목": title,
             "링크": link,
@@ -183,6 +201,9 @@ def load_news(stock_name, ticker):
             "날짜": pub_str,
             "datetime": pub_dt
         })
+
+        if len(news_list) >= 10:
+            break
 
     news_list.sort(key=lambda x: x["datetime"], reverse=True)
     return news_list
